@@ -1,0 +1,151 @@
+pipeline:
+  name: Kensys UI Build and Deploy
+  stages:
+    - stage:
+        name: GitCheckout
+        type: CI
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Git Checkout
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      git checkout ${BRANCH_SPECIFIER_PARAM}
+                      git log --stat -1
+                      CHANGES=$(git log --stat -1)
+                      export CHANGES=${CHANGES}
+    - stage:
+        name: Modify backend link
+        type: CI
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Modify Backend Link
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      cd ng-source-code/kensystems_frontend
+                      sed -i -e "s|apiUrl: 'https://share.groots.in/api'|apiUrl: 'https://kensystems.in/api'|g" src/environments/environment.prod.ts
+    - stage:
+        name: Build Kensys UI
+        type: CI
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Build UI
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      cd ng-source-code/kensystems_frontend
+                      source ~/.nvm/nvm.sh
+                      source ~/.profile
+                      source ~/.bashrc
+                      rm -rf node_modules dist/*
+                      nvm use v16.20.1
+                      npm install -g @angular/cli@11.0.7
+                      npm install --force
+                      ng update @angular/cli@11.0.7
+                      ng update @angular/core@11.0.7
+                      ng build --configuration=production
+    - stage:
+        name: Docker Image Build
+        type: CI
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Docker Image Build
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      cd ng-source-code/kensystems_frontend
+                      GITID=$(git rev-parse --short HEAD)
+                      DOCKER_TAG="kensystems/ui_prod:${GITID}"
+                      sudo docker rmi -f "${DOCKER_TAG}" || true
+                      echo ${DOCKER_TAG} > DOCKER_TAG_kensystems_frontend.txt
+                      sudo docker build --rm --no-cache=false -t ${DOCKER_TAG} .
+    - stage:
+        name: Push Docker Image to PROD env
+        type: CI
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Push Docker Image
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      DOCKER_TAG=$(cat ng-source-code/kensystems_frontend/DOCKER_TAG_kensystems_frontend.txt)
+                      sudo docker save ${DOCKER_TAG} | bzip2 | pv | ssh -o StrictHostKeyChecking=no keysys_prod_server docker load
+                      scp ng-source-code/kensystems_frontend/DOCKER_TAG_kensystems_frontend.txt keysys_prod_server:/tmp/DOCKER_TAG_kensystems_frontend.txt
+    - stage:
+        name: Docker APP Deployment
+        type: CI
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Deploy Docker APP
+                  type: Run
+                  spec:
+                    shell: Bash
+                    command: |
+                      ssh -o StrictHostKeyChecking=no keysys_prod_server << EOF
+                      DOCKER_TAG=$(cat /tmp/DOCKER_TAG_kensystems_frontend.txt)
+                      sudo docker stop kensystems_ui_prod || true
+                      sudo docker rm -f kensystems_ui_prod || true
+                      sudo docker run --restart=always -itd --log-opt max-size=50m --log-opt max-file=7 -p 3002:80 --name kensystems_ui_prod ${DOCKER_TAG}
+                      rm -rf /tmp/DOCKER_TAG_kensystems_frontend.txt
+                      EOF
+  notificationRules:
+    - when: OnSuccess
+      notify:
+        to:
+          - sarin@groots.in
+          - kalpak@groots.in
+        message: |
+          Hello,
+
+          The Jenkins '${JOB_NAME}' status is ${currentBuild.currentResult}.
+
+          Job Details:
+          - Job Name: ${JOB_NAME}
+          - Build Number: ${BUILD_NUMBER}
+          - Branch Name: ${BRANCH_SPECIFIER_PARAM}
+          - Build Status: ${currentBuild.currentResult}
+          - Build URL: ${BUILD_URL}
+          - Last Changes in code: ${CHANGES}
+          
+          Thank you,
+          Jenkins
+    - when: OnFailure
+      notify:
+        to:
+          - sarin@groots.in
+          - kalpak@groots.in
+        message: |
+          Hello,
+
+          The Jenkins '${JOB_NAME}' status is ${currentBuild.currentResult}.
+
+          Job Details:
+          - Job Name: ${JOB_NAME}
+          - Build Number: ${BUILD_NUMBER}
+          - Branch Name: ${BRANCH_SPECIFIER_PARAM}
+          - Build Status: ${currentBuild.currentResult}
+          - Build URL: ${BUILD_URL}
+          - Last Changes in code: ${CHANGES}
+
+          Please review the attached logs and take necessary actions.
+
+          Thank you,
+          Jenkins
