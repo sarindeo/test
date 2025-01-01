@@ -1,0 +1,22 @@
+service:
+  name: deploy_ngconnect
+  identifier: deploy_ngconnect
+  serviceDefinition:
+    type: ECS
+    spec:
+      manifests:
+        - manifest:
+            identifier: acpcedevops_test
+            type: EcsServiceDefinition
+            spec:
+              store:
+                type: Github
+                spec:
+                  connectorRef: groots_ngconnect
+                  gitFetchType: Branch
+                  paths:
+                    - testacpcedevops/
+                  branch: main
+  gitOpsEnabled: false
+  orgIdentifier: default
+  projectIdentifier: default_project
